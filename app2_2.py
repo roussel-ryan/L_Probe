@@ -277,7 +277,7 @@ class App():
         self.zero_stepper()
         
     def wait(self): 
-	    pass
+        pass
 	
     def save_data(self):
         self.save_state = not self.save_state
