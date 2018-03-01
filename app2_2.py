@@ -127,6 +127,7 @@ class App():
     def init_scope(self):
         self.manager = visa.ResourceManager()
         self.scope = self.manager.open_resource('TCPIP::169.254.4.83::INSTR')
+        self.scope.timeout = self.delay
         self.scope.write('DATA:SOU CH1')
         self.scope.write('DATA:WIDTH 1')
         self.scope.write('DATA:ENC RPB')
@@ -258,9 +259,9 @@ class App():
         self.zero_stepper()
         self.stepper.go_to(41.0)
         
-        points = self.scan_number.get()
-        full_length = self.scan_interval.get()
-        samples = self.scan_samples.get()
+        points = int(self.scan_number.get())
+        full_length = float(self.scan_interval.get())
+        samples = int(self.scan_samples.get())
         scan_step_size = full_length / points
         
         logging.info('Doing scan with {} points,step size: {:.2}mm'.format(points,scan_step_size))
