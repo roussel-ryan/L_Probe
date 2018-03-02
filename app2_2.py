@@ -3,12 +3,15 @@
 import tkinter as ttk
 import logging
 import serial
+from struct import unpack
 import time
 
 import stepper
 import numpy as np
+import scipy.signal as signal
 
 import visa
+import pyvisa
 
 class CopyPasteBox(ttk.Entry):
     def __init__(self, master, **kw):
@@ -47,7 +50,13 @@ class App():
         self.filename.set('test.txt')
         
         self.scan_interval = ttk.StringVar()
-        self.scan_interval.set('2.0')
+        self.scan_interval.set('20.0')
+        
+        self.scan_number = ttk.StringVar()
+        self.scan_number.set('4')
+
+        self.scan_samples = ttk.StringVar()
+        self.scan_samples.set('10')
 
         self.manual_disp = ttk.StringVar()
         self.manual_disp.set('2.0')
@@ -74,10 +83,20 @@ class App():
         file_entry = CopyPasteBox(self.frame,textvariable = self.filename)
         file_entry.pack()
         
-        scan_entrylabel = ttk.Label(self.frame,text = 'Increment for scanning (mm): ')
-        scan_entrylabel.pack()
-        scan_entry = CopyPasteBox(self.frame,textvariable = self.scan_interval)
-        scan_entry.pack()
+        scan_lengthlabel = ttk.Label(self.frame,text = 'Distance to scan over (mm): ')
+        scan_lengthlabel.pack()
+        scan_length = CopyPasteBox(self.frame,textvariable = self.scan_interval)
+        scan_length.pack()
+        
+        scan_pointslabel = ttk.Label(self.frame,text = 'Number of points to scan: ')
+        scan_pointslabel.pack()
+        scan_points = CopyPasteBox(self.frame,textvariable = self.scan_number)
+        scan_points.pack()
+        
+        scan_samplelabel = ttk.Label(self.frame,text = 'Number of samples: ')
+        scan_samplelabel.pack()
+        scan_sample = CopyPasteBox(self.frame,textvariable = self.scan_samples)
+        scan_sample.pack()
 
         manual_entrylabel = ttk.Label(self.frame,text = 'Manual displacement (+/- mm): ')
         manual_entrylabel.pack()
@@ -102,16 +121,17 @@ class App():
         displacebutton = ttk.Button(self.frame,text = 'Manually Displace',command = self.manual_displacement)
         displacebutton.pack()
         
-        #self.init_scope()
+        self.init_scope()
         self.stepper = stepper.Stepper('COM4')
         self.continuous_update()
 
     def init_scope(self):
         self.manager = visa.ResourceManager()
-        self.scope = self.manager.open_resource('TCPIP::169.254.1.196::INSTR')
-        self.scope.write('DATA:SOU CH1')
-        self.scope.write('DATA:WIDTH 1')
-        self.scope.write('DATA:ENC RPB')
+        try: 
+            self.scope = self.manager.open_resource('TCPIP::169.254.80.255::INSTR')
+        except pyvisa.errors.VisaIOError: 
+            self.scope = self.manager.open_resource('TCPIP::169.254.4.83::INSTR')
+        self.scope.timeout = self.delay
     
     def read_scope(self):
         data=[]
@@ -161,13 +181,14 @@ class App():
 
             
         V_d2 = CH2 - CH4
-        T = T_e(V_d2,V_bias)
-            
+        T = self.T_e(V_d2,V_bias)
+        
         V_d3 = 10**(((CH3 - CH2)-2.65)/0.95)
         R = 1.1
         I_3 = V_d3/R
             
-        density = (M**0.5 / A) * I_3*1e6*f1(V_d2,T)
+        density = (M**0.5 / A) * I_3*1e6*self.f1(V_d2,T)
+        
             
         #get sample range from trigger
         t_trig = t[np.where(CH1 > 1)]
@@ -198,9 +219,9 @@ class App():
         return [avg_density,std_density],[avg_temp,std_temp]    
     
     def update_plasma_params(self,data_append=''):
-        logging.debug('Updating')
+        logging.info('Updating')
     
-        density_meas,temp_meas = [0.0,1.0],[2.0,3.0]#self.calculate_plasma_params(self.read_scope())
+        density_meas,temp_meas = self.calculate_plasma_params(self.read_scope())#[0.0,1.0],[2.0,3.0]
         self.plasma_density.set('{:.2e} +/- {:.2e}'.format(*density_meas))
         self.plasma_temp.set('{:.2e} +/- {:.2e}'.format(*temp_meas))
         
@@ -212,6 +233,13 @@ class App():
         else:
             self.status.set('Writing: Off')
         self._update_count += 1
+        
+    def f1(self,V_d2,T_e):
+        return 1.05e9 * (T_e)**(-0.5) / (np.exp(V_d2/T_e) - 1)
+    
+    def T_e(self,V_d2,V_d3):
+        return V_d2/np.log(2)
+        #return V_d2 / (np.log(2)*(1+np.exp(-0.2567*(V_d3/V_d2)**2))*(1-np.exp(0.9968*(2-V_d3/V_d2))))
 
     def continuous_update(self): 
         self.update_plasma_params()
@@ -226,26 +254,32 @@ class App():
         self.stepper.go_to(-1000000.0)
         self.stepper.zero_location()
         
-    def scan(self,points = 10,samples=10):
+    def scan(self):
         self.save_state = False
         logging.info('Zeroing probe')
         self.zero_stepper()
+        self.stepper.go_to(41.0)
         
-        full_length = 100
+        points = int(self.scan_number.get())
+        full_length = float(self.scan_interval.get())
+        samples = int(self.scan_samples.get())
         scan_step_size = full_length / points
         
         logging.info('Doing scan with {} points,step size: {:.2}mm'.format(points,scan_step_size))
         for i in range(0,points):
             self.stepper.go_to(scan_step_size)
-            logging.debug('Current stepper position: {:.2} mm'.format(self.stepper.mm_loc))
+            logging.info('Current stepper position: {:.2} mm'.format(self.stepper.mm_loc))
             
             self.save_state = True
             for j in range(0,samples):
                 self.update_plasma_params(data_append = '{:.2}'.format(self.stepper.mm_loc))
+                self.root.after(self.delay,self.wait())
             self.save_state = False
         logging.info('Done with scan, zeroing')
         self.zero_stepper()
         
+    def wait(self): 
+        pass
     
     def save_data(self):
         self.save_state = not self.save_state
@@ -254,7 +288,7 @@ class App():
         self.root.destroy()
 
 def main():
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
     
     try:
         
@@ -264,7 +298,7 @@ def main():
     except Exception as e:
         logging.exception(e)
     finally:
-        app.root.destroy()
+        App().root.destroy()
     
 if __name__=='__main__':
     main()
