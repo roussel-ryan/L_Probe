@@ -11,6 +11,7 @@ import numpy as np
 import scipy.signal as signal
 
 import visa
+import pyvisa
 
 class CopyPasteBox(ttk.Entry):
     def __init__(self, master, **kw):
