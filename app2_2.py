@@ -7,6 +7,7 @@ from struct import unpack
 import time
 
 import stepper
+import scope
 import numpy as np
 import scipy.signal as signal
 
@@ -71,6 +72,9 @@ class App():
         
         self.status = ttk.StringVar()
         self.status.set('Starting')
+
+        self.ip_address = ttk.StringVar()
+        self.ip_address.set('169.254.4.83')
         
         self.frame = ttk.Frame(self.root)
         self.frame.pack()
@@ -92,6 +96,11 @@ class App():
         scan_pointslabel.pack()
         scan_points = CopyPasteBox(self.frame,textvariable = self.scan_number)
         scan_points.pack()
+
+        ip_addresslabel = ttk.Label(self.frame,text = 'Scope IP Address: ')
+        ip_addresslabel.pack()
+        ip_address = CopyPasteBox(self.frame,textvariable = self.ip_address)
+        ip_address.pack()
 		
         scan_samplelabel = ttk.Label(self.frame,text = 'Number of samples: ')
         scan_samplelabel.pack()
@@ -121,107 +130,17 @@ class App():
         displacebutton = ttk.Button(self.frame,text = 'Manually Displace',command = self.manual_displacement)
         displacebutton.pack()
         
-        #self.init_scope()
-        #self.stepper = stepper.Stepper('COM4')
-        self.continuous_update()
-
-    def init_scope(self):
-        self.manager = visa.ResourceManager()
-        self.scope = self.manager.open_resource('TCPIP::169.254.4.83::INSTR')
-        self.scope.timeout = self.delay
-        self.scope.write('DATA:SOU CH1')
-        self.scope.write('DATA:WIDTH 1')
-        self.scope.write('DATA:ENC RPB')
-    
-    def read_scope(self):
-        data=[]
-        for i in ['1','2','3','4']:
-            self.scope.write('DATA:SOU CH%s'%i)
-            self.scope.write('DATA:WIDTH 1')
-            self.scope.write('DATA:ENC RPB')
-            if i=='1':
-                xincr=float(self.scope.ask('WFMPRE:XINCR?'))
-            y_mult=float(self.scope.ask('WFMPRE:YMULT?'))
-            y_zero=float(self.scope.ask('WFMPRE:YZERO?'))
-            y_offset=float(self.scope.ask('WFMPRE:YOFF?'))
-            self.scope.write('CURVE?')
-            curdata=self.scope.read_raw()
-
-            headerlen=2+int(curdata[1])
-            header=curdata[:headerlen]
-            ADC_Wave=curdata[headerlen:-1]
-            ADC_Wave=np.array(unpack('%sB'%len(ADC_Wave),ADC_Wave))
-            if i=='1':
-                data.append(np.arange(0,xincr*len(ADC_Wave)/10,xincr/10))
-            data.append((ADC_Wave-y_offset)*y_mult+y_zero)
-        return np.asfarray(data)
-    
-    def calculate_plasma_params(self,data,ax2=''):
-        A = 0.66 #mm^2 (probe cross section area#
-        M = 40 #effective ion weight
-        V_bias = 60
-        
-        filter_params = [3,0.05]
-        
-        b,a = signal.butter(filter_params[0],filter_params[1],output='ba')
-        
-        t = data[0]*1e6
-        CH1 = signal.filtfilt(b,a,data[1])
-        CH2 = signal.filtfilt(b,a,data[2])
-        CH3 = signal.filtfilt(b,a,data[3])
-        CH4 = signal.filtfilt(b,a,data[4])
-        
-        #if plotting:
-            #ax.plot(t,CH1,label='Trigger')
-            #ax.plot(t,CH2,label='+')
-            #ax.plot(t,CH3,label='-')
-            #ax.plot(t,CH4,label='F')
-
-            #ax.legend()
-
-            
-        V_d2 = CH2 - CH4
-        T = self.T_e(V_d2,V_bias)
-        
-        V_d3 = 10**(((CH3 - CH2)-2.65)/0.95)
-        R = 1.1
-        I_3 = V_d3/R
-            
-        density = (M**0.5 / A) * I_3*1e6*self.f1(V_d2,T)
-        
-            
-        #get sample range from trigger
-        t_trig = t[np.where(CH1 > 1)]
-        t_i = np.min(t_trig)
-        t_f = np.max(t_trig)
-        sample_length = t_f - t_i
-            
-        sample_range = (t_i + 0.4*sample_length,t_f - 0.1*sample_length)
-            
-        avg_density = np.mean(density[np.where((t > sample_range[0]) & (t < sample_range[1]))])
-        std_density = np.std(density[np.where((t > sample_range[0]) & (t < sample_range[1]))])
-        
-        avg_temp = np.mean(T[np.where((t > sample_range[0]) & (t < sample_range[1]))])
-        std_temp = np.std(T[np.where((t > sample_range[0]) & (t < sample_range[1]))])
-            
-        if ax2: 
-            p1, = ax2.plot(t,T,label='Electron Temp. ${:.2}\pm{:.2}$ eV'.format(avg_temp,std_temp))
-            p3, = ax2.plot(t,CH1,label='Trigger')
-            ax2.set_ylabel('Electron Temperature (eV)')
-            ax2.set_xlabel('Time ($\mu s)$')
-            ax2.set_xlim(sample_range[0],sample_range[1])
-            
-            ax4 = ax2.twinx()
-            ax4.set_ylabel('Plasma Density ($cm^{-3}$)')
-            p2, = ax4.semilogy(t,density,'r',label='Plasma Density ${:.2}\pm{:.2}$ $1/cm^3$'.format(avg_density,std_density))
-
-            ax2.legend(handles=[p1,p2,p3])
-        return [avg_density,std_density],[avg_temp,std_temp]    
+        try: 
+            self.scope = scope.Scope(self.ip_address.get(),self.delay)
+            self.continuous_update()
+        except pyvisa.errors.VisaIOError:
+            self.status.set('Failed to connect to scope')
+        #self.stepper = stepper.Stepper('COM4')  
     
     def update_plasma_params(self,data_append=''):
         logging.debug('Updating')
     
-        density_meas,temp_meas = [0.0,1.0],[2.0,3.0]#self.calculate_plasma_params(self.read_scope())#[0.0,1.0],[2.0,3.0]
+        density_meas,temp_meas = self.scope.calculate_plasma_params(self.scope.read_scope())#[0.0,1.0],[2.0,3.0]
         self.plasma_density.set('{:.2e} +/- {:.2e}'.format(*density_meas))
         self.plasma_temp.set('{:.2e} +/- {:.2e}'.format(*temp_meas))
         
@@ -233,13 +152,6 @@ class App():
         else:
             self.status.set('Writing: Off')
         self._update_count += 1
-        
-    def f1(self,V_d2,T_e):
-        return 1.05e9 * (T_e)**(-0.5) / (np.exp(V_d2/T_e) - 1)
-	
-    def T_e(self,V_d2,V_d3):
-        return V_d2/np.log(2)
-        #return V_d2 / (np.log(2)*(1+np.exp(-0.2567*(V_d3/V_d2)**2))*(1-np.exp(0.9968*(2-V_d3/V_d2))))
 
     def continuous_update(self): 
         self.update_plasma_params()
