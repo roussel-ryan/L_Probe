@@ -140,6 +140,7 @@ class App():
         displacebutton = ttk.Button(self.frame,text = 'Manually Displace',command = self.manual_displacement)
         displacebutton.pack()
         
+        self.status.set('Connecting to Scope')
         self.init_scope()
         self.init_stepper()
         self.continuous_update()
@@ -162,7 +163,6 @@ class App():
             # self.stepper_connection.set('Stepper: Not Connected')
     
     def init_scope(self): 
-        self.status.set('Connecting to Scope')
         try: 
             self.scope = scope.Scope(self.delay)
             self.ip_address.set(self.scope.ip_address)
