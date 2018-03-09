@@ -41,6 +41,9 @@ class App():
         
         self.root = ttk.Tk()
         
+        self.manager = visa.ResourceManager()
+        self.stepper_present = False 
+        
         self.delay = 2000
         self.loc= 0.00
         self._update_count = 0
@@ -77,10 +80,10 @@ class App():
         self.ip_address.set('Scope IP Address: 0.0.0.0')
         
         self.stepper_connection = ttk.StringVar()
-        self.stepper_connection.set('Stepper: ')
+        self.stepper_connection.set('Stepper: Not Connected')
         
         self.scope_connection = ttk.StringVar()
-        self.scope_connection.set('Scope: ')
+        self.scope_connection.set('Scope: Not Connected')
         
         self.frame = ttk.Frame(self.root)
         self.frame.pack()
@@ -170,6 +173,12 @@ class App():
             
     def continuous_update(self): 
         self.init_scope()
+        for instrument in self.manager.list_resources():
+            if "ASRL" in instrument and self.stepper_connection.get()=='Stepper: Not Connected': 
+                self.stepper.end_connection()
+                self.init_stepper()
+            elif (not "ASRL" in instrument):
+                self.stepper_connection.set('Stepper: Not Connected')
         if self.scope_connection.get()=='Scope: Connected':
             self.update_plasma_params()
         self.root.after(self.delay,self.continuous_update)
@@ -181,17 +190,18 @@ class App():
             density_meas,temp_meas = self.scope.calculate_plasma_params(self.scope.read_scope())#[0.0,1.0],[2.0,3.0]
             self.plasma_density.set('{:.2e} +/- {:.2e}'.format(*density_meas))
             self.plasma_temp.set('{:.2e} +/- {:.2e}'.format(*temp_meas))
-        except pyvisa.errors.VisaIOError: 
+
+            if self.save_state:
+                logging.info('Writing to file')
+                self.status.set('Writing: On')
+                with open(self.filename.get(),'a') as file:
+                    file.write('{:.4e},{:.4e},{:.4e},{:.4e},{}\n'.format(*density_meas,*temp_meas,data_append))
+            else:
+                self.status.set('Writing: Off')
+            self._update_count += 1
+            
+        except pyvisa.errors.VisaIOError:
             logging.info('Failed to read')
-        
-        if self.save_state:
-            logging.info('Writing to file')
-            self.status.set('Writing: On')
-            with open(self.filename.get(),'a') as file:
-                file.write('{:.4e},{:.4e},{:.4e},{:.4e},{}\n'.format(*density_meas,*temp_meas,data_append))
-        else:
-            self.status.set('Writing: Off')
-        self._update_count += 1
 
     def manual_displacement(self):
         if self.stepper_connection.get() == 'Stepper: Connected':

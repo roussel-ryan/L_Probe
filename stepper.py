@@ -60,3 +60,6 @@ class Stepper:
         
         return end_condition
         
+    def end_connection(self): 
+        self.ser.close()
+        
