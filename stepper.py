@@ -4,7 +4,6 @@ import time
 
 class Stepper:
     def __init__(self,channel='COM4'):
-        logging.info('Starting stepper controller')
         self.ser = serial.Serial(channel,9600,timeout = 10)
         self.zero_location()
         

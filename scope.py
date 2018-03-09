@@ -12,11 +12,12 @@ class Scope():
         for instrument in self.manager.list_resources(): 
             if "TCPIP" in instrument: 
                 self.ip_address = instrument.split('::')[1]
-                self.scope = self.manager.open_resource('TCPIP::{}::INSTR'.format(self.ip_address),timeout = delay)
+                self.scope = self.manager.open_resource('TCPIP::{}::INSTR'.format(self.ip_address))
+                self.scope.timeout = delay
                 self.connection = True
-        self.ip_address = self.manager.list_resources()[0].split('::')[1]
-        self.scope = self.manager.open_resource('TCPIP::{}::INSTR'.format(self.ip_address),timeout = delay)
-
+            else: 
+                pass
+                
     def read_scope(self):
         data=[]
         for i in ['1','2','3','4']:
