@@ -7,10 +7,12 @@ from struct import unpack
 import time
 
 import stepper
+import scope
 import numpy as np
 import scipy.signal as signal
 
 import visa
+import pyvisa
 
 class CopyPasteBox(ttk.Entry):
     def __init__(self, master, **kw):
@@ -70,12 +72,30 @@ class App():
         
         self.status = ttk.StringVar()
         self.status.set('Starting')
+
+        self.ip_address = ttk.StringVar()
+        self.ip_address.set('169.254.4.83')
+        
+        self.stepper_connection = ttk.StringVar()
+        self.stepper_connection.set('Stepper: ')
+        
+        self.scope_connection = ttk.StringVar()
+        self.scope_connection.set('Scope: ')
         
         self.frame = ttk.Frame(self.root)
         self.frame.pack()
         
         status_label = ttk.Label(self.frame,textvariable = self.status)
         status_label.pack()
+        
+        scope_label = ttk.Label(self.frame,textvariable = self.scope_connection)
+        scope_label.pack()
+        
+        ip_addresslabel = ttk.Label(self.frame,text = 'Scope IP Address: {}'.format(self.ip_address.get()))
+        ip_addresslabel.pack()
+        
+        stepper_label = ttk.Label(self.frame,textvariable = self.stepper_connection)
+        stepper_label.pack()
         
         file_entrylabel = ttk.Label(self.frame,text = 'Save to file: ')
         file_entrylabel.pack()
@@ -120,106 +140,58 @@ class App():
         displacebutton = ttk.Button(self.frame,text = 'Manually Displace',command = self.manual_displacement)
         displacebutton.pack()
         
-        #self.init_scope()
-        #self.stepper = stepper.Stepper('COM4')
+        self.init_stepper()
+        self.status.set('Connecting to Scope')
         self.continuous_update()
-
-    def init_scope(self):
-        self.manager = visa.ResourceManager()
-        self.scope = self.manager.open_resource('TCPIP::169.254.4.83::INSTR')
-        self.scope.write('DATA:SOU CH1')
-        self.scope.write('DATA:WIDTH 1')
-        self.scope.write('DATA:ENC RPB')
+        # self.status.set('Connecting to Scope')
+        # try: 
+            # self.scope = scope.Scope(self.delay)
+            # self.ip_address.set(self.scope.ip_address)
+            # self.scope_connection.set('Scope: Connected')
+            # self.continuous_update()
+        # except pyvisa.errors.VisaIOError:
+            # self.status.set('Failed to connect to scope')
+            # self.scope_connection.set('Scope: Not Connected')
+            
+        # self.status.set('Connecting to Stepper')
+        # try: 
+            # self.stepper = stepper.Stepper('COM4') 
+            # self.stepper_connection.set('Stepper: Connected')
+        # except serial.serialutil.SerialException: 
+            # self.status.set('Failed to connect to stepper')
+            # self.stepper_connection.set('Stepper: Not Connected')
     
-    def read_scope(self):
-        data=[]
-        for i in ['1','2','3','4']:
-            self.scope.write('DATA:SOU CH%s'%i)
-            self.scope.write('DATA:WIDTH 1')
-            self.scope.write('DATA:ENC RPB')
-            if i=='1':
-                xincr=float(self.scope.ask('WFMPRE:XINCR?'))
-            y_mult=float(self.scope.ask('WFMPRE:YMULT?'))
-            y_zero=float(self.scope.ask('WFMPRE:YZERO?'))
-            y_offset=float(self.scope.ask('WFMPRE:YOFF?'))
-            self.scope.write('CURVE?')
-            curdata=self.scope.read_raw()
+    def init_scope(self): 
+        try: 
+            self.scope = scope.Scope(self.delay)
+            if self.scope.connection: 
+                self.scope_connection.set('Scope: Connected')
+            else: 
+                self.scope_connection.set('Scope: Not Connected')
+            self.ip_address.set(self.scope.ip_address)
+        except pyvisa.errors.VisaIOError:
+            self.status.set('Failed to connect to scope')
+            self.scope_connection.set('Scope: Not Connected')
 
-            headerlen=2+int(curdata[1])
-            header=curdata[:headerlen]
-            ADC_Wave=curdata[headerlen:-1]
-            ADC_Wave=np.array(unpack('%sB'%len(ADC_Wave),ADC_Wave))
-            if i=='1':
-                data.append(np.arange(0,xincr*len(ADC_Wave)/10,xincr/10))
-            data.append((ADC_Wave-y_offset)*y_mult+y_zero)
-        return np.asfarray(data)
-    
-    def calculate_plasma_params(self,data,ax2=''):
-        A = 0.66 #mm^2 (probe cross section area#
-        M = 40 #effective ion weight
-        V_bias = 60
-        
-        filter_params = [3,0.05]
-        
-        b,a = signal.butter(filter_params[0],filter_params[1],output='ba')
-        
-        t = data[0]*1e6
-        CH1 = signal.filtfilt(b,a,data[1])
-        CH2 = signal.filtfilt(b,a,data[2])
-        CH3 = signal.filtfilt(b,a,data[3])
-        CH4 = signal.filtfilt(b,a,data[4])
-        
-        #if plotting:
-            #ax.plot(t,CH1,label='Trigger')
-            #ax.plot(t,CH2,label='+')
-            #ax.plot(t,CH3,label='-')
-            #ax.plot(t,CH4,label='F')
-
-            #ax.legend()
-
+    def init_stepper(self): 
+        self.status.set('Connecting to Stepper')
+        try: 
+            self.stepper = stepper.Stepper('COM4') 
+            self.stepper_connection.set('Stepper: Connected')
+        except serial.serialutil.SerialException: 
+            self.status.set('Failed to connect to stepper')
+            self.stepper_connection.set('Stepper: Not Connected')
             
-        V_d2 = CH2 - CH4
-        T = self.T_e(V_d2,V_bias)
-        
-        V_d3 = 10**(((CH3 - CH2)-2.65)/0.95)
-        R = 1.1
-        I_3 = V_d3/R
+    def continuous_update(self): 
+        self.init_scope()
+        if self.scope_connection.get()=='Scope: Connected':
+            self.update_plasma_params()
+        self.root.after(self.delay,self.continuous_update)
             
-        density = (M**0.5 / A) * I_3*1e6*self.f1(V_d2,T)
-        
-            
-        #get sample range from trigger
-        t_trig = t[np.where(CH1 > 1)]
-        t_i = np.min(t_trig)
-        t_f = np.max(t_trig)
-        sample_length = t_f - t_i
-            
-        sample_range = (t_i + 0.4*sample_length,t_f - 0.1*sample_length)
-            
-        avg_density = np.mean(density[np.where((t > sample_range[0]) & (t < sample_range[1]))])
-        std_density = np.std(density[np.where((t > sample_range[0]) & (t < sample_range[1]))])
-        
-        avg_temp = np.mean(T[np.where((t > sample_range[0]) & (t < sample_range[1]))])
-        std_temp = np.std(T[np.where((t > sample_range[0]) & (t < sample_range[1]))])
-            
-        if ax2: 
-            p1, = ax2.plot(t,T,label='Electron Temp. ${:.2}\pm{:.2}$ eV'.format(avg_temp,std_temp))
-            p3, = ax2.plot(t,CH1,label='Trigger')
-            ax2.set_ylabel('Electron Temperature (eV)')
-            ax2.set_xlabel('Time ($\mu s)$')
-            ax2.set_xlim(sample_range[0],sample_range[1])
-            
-            ax4 = ax2.twinx()
-            ax4.set_ylabel('Plasma Density ($cm^{-3}$)')
-            p2, = ax4.semilogy(t,density,'r',label='Plasma Density ${:.2}\pm{:.2}$ $1/cm^3$'.format(avg_density,std_density))
-
-            ax2.legend(handles=[p1,p2,p3])
-        return [avg_density,std_density],[avg_temp,std_temp]    
-    
     def update_plasma_params(self,data_append=''):
-        logging.debug('Updating')
+        logging.info('Updating')
     
-        density_meas,temp_meas = [0.0,1.0],[2.0,3.0]#self.calculate_plasma_params(self.read_scope())#[0.0,1.0],[2.0,3.0]
+        density_meas,temp_meas = self.scope.calculate_plasma_params(self.scope.read_scope())#[0.0,1.0],[2.0,3.0]
         self.plasma_density.set('{:.2e} +/- {:.2e}'.format(*density_meas))
         self.plasma_temp.set('{:.2e} +/- {:.2e}'.format(*temp_meas))
         
@@ -231,17 +203,6 @@ class App():
         else:
             self.status.set('Writing: Off')
         self._update_count += 1
-        
-    def f1(self,V_d2,T_e):
-        return 1.05e9 * (T_e)**(-0.5) / (np.exp(V_d2/T_e) - 1)
-	
-    def T_e(self,V_d2,V_d3):
-        return V_d2/np.log(2)
-        #return V_d2 / (np.log(2)*(1+np.exp(-0.2567*(V_d3/V_d2)**2))*(1-np.exp(0.9968*(2-V_d3/V_d2))))
-
-    def continuous_update(self): 
-        self.update_plasma_params()
-        self.root.after(self.delay,self.continuous_update)
 
     def manual_displacement(self):
         self.status.set('Stepping')
@@ -258,18 +219,19 @@ class App():
         self.zero_stepper()
         self.stepper.go_to(41.0)
         
-        points = self.scan_number.get()
-        full_length = self.scan_interval.get()
-        samples = self.scan_samples.get()
+        points = int(self.scan_number.get())
+        full_length = float(self.scan_interval.get())
+        samples = int(self.scan_samples.get())
         scan_step_size = full_length / points
         
         logging.info('Doing scan with {} points,step size: {:.2}mm'.format(points,scan_step_size))
         for i in range(0,points):
             self.stepper.go_to(scan_step_size)
-            logging.debug('Current stepper position: {:.2} mm'.format(self.stepper.mm_loc))
+            logging.info('Current stepper position: {:.2} mm'.format(self.stepper.mm_loc))
             
             self.save_state = True
             for j in range(0,samples):
+                self.init_scope()
                 self.update_plasma_params(data_append = '{:.2}'.format(self.stepper.mm_loc))
                 self.root.after(self.delay,self.wait())
             self.save_state = False
@@ -277,7 +239,7 @@ class App():
         self.zero_stepper()
         
     def wait(self): 
-	    pass
+        pass
 	
     def save_data(self):
         self.save_state = not self.save_state
@@ -286,7 +248,7 @@ class App():
         self.root.destroy()
 
 def main():
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
     
     try:
         
