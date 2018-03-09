@@ -1,10 +1,14 @@
 import visa 
 import pyvisa
+import numpy as np
+from struct import unpack
+import scipy.signal as signal
 
 class Scope(): 
-    def __init__(self,address,delay):
+    def __init__(self,delay):
         self.manager = visa.ResourceManager()
-        self.scope = self.manager.open_resource('TCPIP::{}::INSTR'.format(address)) 
+        self.ip_address = self.manager.list_resources()[0].split('::')[1]
+        self.scope = self.manager.open_resource('TCPIP::{}::INSTR'.format(self.ip_address)) 
         self.scope.delay = delay
 
     def read_scope(self):

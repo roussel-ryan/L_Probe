@@ -76,11 +76,26 @@ class App():
         self.ip_address = ttk.StringVar()
         self.ip_address.set('169.254.4.83')
         
+        self.stepper_connection = ttk.StringVar()
+        self.stepper_connection.set('Stepper: ')
+        
+        self.scope_connection = ttk.StringVar()
+        self.scope_connection.set('Scope: ')
+        
         self.frame = ttk.Frame(self.root)
         self.frame.pack()
         
         status_label = ttk.Label(self.frame,textvariable = self.status)
         status_label.pack()
+        
+        scope_label = ttk.Label(self.frame,textvariable = self.scope_connection)
+        scope_label.pack()
+        
+        ip_addresslabel = ttk.Label(self.frame,text = 'Scope IP Address: {}'.format(self.ip_address.get()))
+        ip_addresslabel.pack()
+        
+        stepper_label = ttk.Label(self.frame,textvariable = self.stepper_connection)
+        stepper_label.pack()
         
         file_entrylabel = ttk.Label(self.frame,text = 'Save to file: ')
         file_entrylabel.pack()
@@ -96,11 +111,6 @@ class App():
         scan_pointslabel.pack()
         scan_points = CopyPasteBox(self.frame,textvariable = self.scan_number)
         scan_points.pack()
-
-        ip_addresslabel = ttk.Label(self.frame,text = 'Scope IP Address: ')
-        ip_addresslabel.pack()
-        ip_address = CopyPasteBox(self.frame,textvariable = self.ip_address)
-        ip_address.pack()
 		
         scan_samplelabel = ttk.Label(self.frame,text = 'Number of samples: ')
         scan_samplelabel.pack()
@@ -130,15 +140,49 @@ class App():
         displacebutton = ttk.Button(self.frame,text = 'Manually Displace',command = self.manual_displacement)
         displacebutton.pack()
         
+        self.init_scope()
+        self.init_stepper()
+        self.continuous_update()
+        # self.status.set('Connecting to Scope')
+        # try: 
+            # self.scope = scope.Scope(self.delay)
+            # self.ip_address.set(self.scope.ip_address)
+            # self.scope_connection.set('Scope: Connected')
+            # self.continuous_update()
+        # except pyvisa.errors.VisaIOError:
+            # self.status.set('Failed to connect to scope')
+            # self.scope_connection.set('Scope: Not Connected')
+            
+        # self.status.set('Connecting to Stepper')
+        # try: 
+            # self.stepper = stepper.Stepper('COM4') 
+            # self.stepper_connection.set('Stepper: Connected')
+        # except serial.serialutil.SerialException: 
+            # self.status.set('Failed to connect to stepper')
+            # self.stepper_connection.set('Stepper: Not Connected')
+    
+    def init_scope(self): 
+        self.status.set('Connecting to Scope')
         try: 
-            self.scope = scope.Scope(self.ip_address.get(),self.delay)
-            self.continuous_update()
+            self.scope = scope.Scope(self.delay)
+            self.ip_address.set(self.scope.ip_address)
+            self.scope_connection.set('Scope: Connected')
+            #self.continuous_update()
         except pyvisa.errors.VisaIOError:
             self.status.set('Failed to connect to scope')
-        #self.stepper = stepper.Stepper('COM4')  
-    
+            self.scope_connection.set('Scope: Not Connected')
+
+    def init_stepper(self): 
+        self.status.set('Connecting to Stepper')
+        try: 
+            self.stepper = stepper.Stepper('COM4') 
+            self.stepper_connection.set('Stepper: Connected')
+        except serial.serialutil.SerialException: 
+            self.status.set('Failed to connect to stepper')
+            self.stepper_connection.set('Stepper: Not Connected')
+            
     def update_plasma_params(self,data_append=''):
-        logging.debug('Updating')
+        logging.info('Updating')
     
         density_meas,temp_meas = self.scope.calculate_plasma_params(self.scope.read_scope())#[0.0,1.0],[2.0,3.0]
         self.plasma_density.set('{:.2e} +/- {:.2e}'.format(*density_meas))
@@ -154,7 +198,9 @@ class App():
         self._update_count += 1
 
     def continuous_update(self): 
-        self.update_plasma_params()
+        if self.scope_connection.get()=='Scope: Connected':
+            self.update_plasma_params()
+        self.init_scope()
         self.root.after(self.delay,self.continuous_update)
 
     def manual_displacement(self):
@@ -180,10 +226,11 @@ class App():
         logging.info('Doing scan with {} points,step size: {:.2}mm'.format(points,scan_step_size))
         for i in range(0,points):
             self.stepper.go_to(scan_step_size)
-            logging.debug('Current stepper position: {:.2} mm'.format(self.stepper.mm_loc))
+            logging.info('Current stepper position: {:.2} mm'.format(self.stepper.mm_loc))
             
             self.save_state = True
             for j in range(0,samples):
+                self.init_scope()
                 self.update_plasma_params(data_append = '{:.2}'.format(self.stepper.mm_loc))
                 self.root.after(self.delay,self.wait())
             self.save_state = False
@@ -200,7 +247,7 @@ class App():
         self.root.destroy()
 
 def main():
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
     
     try:
         
