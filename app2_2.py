@@ -149,7 +149,7 @@ class App():
     
     def init_scope(self): 
         try: 
-            self.scope = scope.Scope(self.delay)
+            self.scope = scope.Scope(self.delay,self.manager)
             if self.scope.connection: 
                 self.scope_connection.set('Scope: Connected')
             else: 
@@ -181,6 +181,7 @@ class App():
                 self.stepper_connection.set('Stepper: Not Connected')
         if self.scope_connection.get()=='Scope: Connected':
             self.update_plasma_params()
+        self.scope.close()
         self.root.after(self.delay,self.continuous_update)
             
     def update_plasma_params(self,data_append=''):
@@ -266,6 +267,7 @@ def main():
     except Exception as e:
         logging.exception(e)
     finally:
+        app.manager.close()
         app.root.destroy()
     
 if __name__=='__main__':

@@ -5,8 +5,8 @@ from struct import unpack
 import scipy.signal as signal
 
 class Scope(): 
-    def __init__(self,delay):
-        self.manager = visa.ResourceManager()
+    def __init__(self,delay,manager):
+        self.manager = manager
         self.connection = False
         self.ip_address = '0.0.0.0'
         for instrument in self.manager.list_resources(): 
@@ -102,6 +102,10 @@ class Scope():
 
             ax2.legend(handles=[p1,p2,p3])
         return [avg_density,std_density],[avg_temp,std_temp] 
+    
+    def close(self):
+        if self.connection == True: 
+            self.scope.close()
 
     def f1(self,V_d2,T_e):
         return 1.05e9 * (T_e)**(-0.5) / (np.exp(V_d2/T_e) - 1)
