@@ -177,8 +177,6 @@ class App():
             if "ASRL" in instrument and self.stepper_connection.get()=='Stepper: Not Connected': 
                 self.stepper.end_connection()
                 self.init_stepper()
-            elif (not "ASRL" in instrument):
-                self.stepper_connection.set('Stepper: Not Connected')
         if self.scope_connection.get()=='Scope: Connected':
             self.update_plasma_params()
         self.scope.close()
