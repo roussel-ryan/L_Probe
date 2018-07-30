@@ -2,6 +2,7 @@
 
 import tkinter as ttk
 import logging
+import os
 import serial
 from struct import unpack
 import time
@@ -44,10 +45,11 @@ class App():
         self.loc= 0.00
         self._update_count = 0
 
-        self.save_state = False
+        self.save_plasma_params = False
+        self.save_raw = False
 
-        self.filename = ttk.StringVar()
-        self.filename.set('test.txt')
+        self.plasma_params_filename = ttk.StringVar()
+        self.plasma_params_filename.set('test.txt')
         
         self.scan_interval = ttk.StringVar()
         self.scan_interval.set('20.0')
@@ -80,7 +82,7 @@ class App():
         
         file_entrylabel = ttk.Label(self.frame,text = 'Save to file: ')
         file_entrylabel.pack()
-        file_entry = CopyPasteBox(self.frame,textvariable = self.filename)
+        file_entry = CopyPasteBox(self.frame,textvariable = self.plasma_params_filename)
         file_entry.pack()
         
         scan_lengthlabel = ttk.Label(self.frame,text = 'Distance to scan over (mm): ')
@@ -111,19 +113,23 @@ class App():
         
         plasma_temp_label = ttk.Label(self.frame,textvariable = self.plasma_temp)
         plasma_temp_label.pack()
+       
+        saveparamsbutton = ttk.Button(self.frame,text = 'Save Plasma Params',command = self.flip_save_plasma_params)
+        saveparamsbutton.pack()
         
-        savebutton = ttk.Button(self.frame,text = 'Save Data',command = self.save_data)
-        savebutton.pack()
-
+        saveshotsbutton = ttk.Button(self.frame,text = 'Save Shots',command = self.save_shots)
+        saveshotsbutton.pack()
+        
         scanbutton = ttk.Button(self.frame,text = 'Scan Plasma Chamber',command = self.scan)
         scanbutton.pack()
+        
 
         displacebutton = ttk.Button(self.frame,text = 'Manually Displace',command = self.manual_displacement)
         displacebutton.pack()
         
-        self.init_scope()
-        self.stepper = stepper.Stepper('COM4')
-        self.continuous_update()
+        #self.init_scope()
+        #self.stepper = stepper.Stepper('COM4')
+        #self.continuous_update()
 
     def init_scope(self):
         self.manager = visa.ResourceManager()
@@ -218,22 +224,45 @@ class App():
             ax2.legend(handles=[p1,p2,p3])
         return [avg_density,std_density],[avg_temp,std_temp]    
     
-    def update_plasma_params(self,data_append=''):
+    def update_plasma_params(self,filename,density_meas='',temp_meas='',data_append=''):
         logging.info('Updating')
-    
-        density_meas,temp_meas = self.calculate_plasma_params(self.read_scope())#[0.0,1.0],[2.0,3.0]
+        if density_meas == '' or temp_meas == '':
+            density_meas,temp_meas = self.calculate_plasma_params(self.read_scope())#[0.0,1.0],[2.0,3.0]
+        
         self.plasma_density.set('{:.2e} +/- {:.2e}'.format(*density_meas))
         self.plasma_temp.set('{:.2e} +/- {:.2e}'.format(*temp_meas))
         
-        if self.save_state:
+        if self.save_plasma_params:
             logging.info('Writing to file')
             self.status.set('Writing: On')
-            with open(self.filename.get(),'a') as file:
+            with open(self.filename,'a') as file:
                 file.write('{:.4e},{:.4e},{:.4e},{:.4e},{}\n'.format(*density_meas,*temp_meas,data_append))
         else:
             self.status.set('Writing: Off')
         self._update_count += 1
+    
+    def save_shots(self):
+        logging.info('Saving shots')
+        self.save_plasma_params = True
         
+        foldername = 'data/{}'.format(time.strftime('%m_%d_%Y',time.gmtime()))
+        
+        #search for a folder of a name and create it if the name is not found
+        for i in range(10000):
+            fullpth = '{}_{}'.format(foldername,i)
+            if not os.path.isdir(fullpth):
+                os.makedirs(fullpth)
+                break
+                
+        #save raw data and plasma params for each shot
+        for i in range(int(self.scan_samples)):
+            data = self.read_scope()
+            density,temp = self.calculate_plasma_params(data)
+            self.update_plasma_params('{}/plasma_params.txt'.format(fullpth),density_meas = density,temp_meas = temp)
+            np.savetxt('{}/data_{}.txt'.format(fullpth,i),data.T)
+            time.sleep(self.delay/1000)
+            
+            
     def f1(self,V_d2,T_e):
         return 1.05e9 * (T_e)**(-0.5) / (np.exp(V_d2/T_e) - 1)
     
@@ -242,7 +271,7 @@ class App():
         #return V_d2 / (np.log(2)*(1+np.exp(-0.2567*(V_d3/V_d2)**2))*(1-np.exp(0.9968*(2-V_d3/V_d2))))
 
     def continuous_update(self): 
-        self.update_plasma_params()
+        self.update_plasma_params(self.plasma_params_filename.get())
         self.root.after(self.delay,self.continuous_update)
 
     def manual_displacement(self):
@@ -255,7 +284,7 @@ class App():
         self.stepper.zero_location()
         
     def scan(self):
-        self.save_state = False
+        self.save_plasma_params = False
         logging.info('Zeroing probe')
         self.zero_stepper()
         self.stepper.go_to(41.0)
@@ -270,19 +299,22 @@ class App():
             self.stepper.go_to(scan_step_size)
             logging.info('Current stepper position: {:.2} mm'.format(self.stepper.mm_loc))
             
-            self.save_state = True
+            self.save_plasma_params = True
             for j in range(0,samples):
-                self.update_plasma_params(data_append = '{:.2}'.format(self.stepper.mm_loc))
+                self.update_plasma_params(self.plasma_params_filename.get(),data_append = '{:.2}'.format(self.stepper.mm_loc))
                 self.root.after(self.delay,self.wait())
-            self.save_state = False
+            self.save_plasma_params = False
         logging.info('Done with scan, zeroing')
         self.zero_stepper()
         
     def wait(self): 
         pass
     
-    def save_data(self):
-        self.save_state = not self.save_state
+    def flip_save_plasma_params(self):
+        self.save_plasma_params = not self.save_plasma_params
+        
+    def flip_save_raw(self):
+        self.save_raw = not self.save_raw
         
     def destroy(self):
         self.root.destroy()
