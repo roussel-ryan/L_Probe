@@ -8,6 +8,7 @@ from struct import unpack
 import time
 
 import stepper
+import probe_math as pmath
 import numpy as np
 import scipy.signal as signal
 
@@ -41,10 +42,12 @@ class App():
         
         self.root = ttk.Tk()
         
-        self.delay = 2000
+        self.delay = 1000
+        self.timeout = 1000
         self.loc= 0.00
         self._update_count = 0
 
+        self.measure_plasma_params = False
         self.save_plasma_params = False
         self.save_raw = False
 
@@ -114,7 +117,11 @@ class App():
         plasma_temp_label = ttk.Label(self.frame,textvariable = self.plasma_temp)
         plasma_temp_label.pack()
        
-        saveparamsbutton = ttk.Button(self.frame,text = 'Save Plasma Params',command = self.flip_save_plasma_params)
+        
+        saveparamsbutton = ttk.Button(self.frame,text = 'Calculate Plasma Params',command = lambda self.calculate_plasma_params: not self.calculate_plasma_params)
+        saveparamsbutton.pack()
+       
+        saveparamsbutton = ttk.Button(self.frame,text = 'Save Plasma Params',command = lambda self.save_plasma_params: not self.save_plasma_params)
         saveparamsbutton.pack()
         
         saveshotsbutton = ttk.Button(self.frame,text = 'Save Shots',command = self.save_shots)
@@ -134,144 +141,85 @@ class App():
     def init_scope(self):
         self.manager = visa.ResourceManager()
         try: 
-            self.scope = self.manager.open_resource('TCPIP::169.254.80.255::INSTR')
+            self.scope = self.manager.open_resource('GPIB1::1::INSTR')
         except pyvisa.errors.VisaIOError: 
             self.scope = self.manager.open_resource('TCPIP::169.254.4.83::INSTR')
-        self.scope.timeout = self.delay
-    
+        
     def read_scope(self):
-        data=[]
-        for i in ['1','2','3','4']:
-            self.scope.write('DATA:SOU CH%s'%i)
-            self.scope.write('DATA:WIDTH 1')
-            self.scope.write('DATA:ENC RPB')
-            if i=='1':
-                xincr=float(self.scope.ask('WFMPRE:XINCR?'))
-            y_mult=float(self.scope.ask('WFMPRE:YMULT?'))
-            y_zero=float(self.scope.ask('WFMPRE:YZERO?'))
-            y_offset=float(self.scope.ask('WFMPRE:YOFF?'))
-            self.scope.write('CURVE?')
-            curdata=self.scope.read_raw()
+        logging.info('Reading scope')
+        self.scope.write('DATA:SOURCE CH1,CH2,CH3,CH4')
+        self.scope.write('DATA:ENCDG ASCII')
+        self.scope.write('DATA:WID 1')
 
-            headerlen=2+int(curdata[1])
-            header=curdata[:headerlen]
-            ADC_Wave=curdata[headerlen:-1]
-            ADC_Wave=np.array(unpack('%sB'%len(ADC_Wave),ADC_Wave))
-            if i=='1':
-                data.append(np.arange(0,xincr*len(ADC_Wave)/10,xincr/10))
-            data.append((ADC_Wave-y_offset)*y_mult+y_zero)
-        return np.asfarray(data)
+        nsettings = 10
+        self.preambles = self.scope.query('WFMPR?').strip().split(';')
+        logging.debug(len(self.preambles))
+
+                
+        self.channel_settings = []
+        for j in range(4):
+            self.channel_settings.append(self.preambles[5+j*nsettings:5+(j+1)*nsettings])
+
     
-    def calculate_plasma_params(self,data,ax2=''):
-        A = 0.66 #mm^2 (probe cross section area#
-        M = 40 #effective ion weight
-        V_bias = 60
-        
-        filter_params = [3,0.05]
-        
-        b,a = signal.butter(filter_params[0],filter_params[1],output='ba')
-        
-        t = data[0]*1e6
-        CH1 = signal.filtfilt(b,a,data[1])
-        CH2 = signal.filtfilt(b,a,data[2])
-        CH3 = signal.filtfilt(b,a,data[3])
-        CH4 = signal.filtfilt(b,a,data[4])
-        
-        #if plotting:
-            #ax.plot(t,CH1,label='Trigger')
-            #ax.plot(t,CH2,label='+')
-            #ax.plot(t,CH3,label='-')
-            #ax.plot(t,CH4,label='F')
-
-            #ax.legend()
-
-            
-        V_d2 = CH2 - CH4
-        T = self.T_e(V_d2,V_bias)
-        
-        V_d3 = 10**(((CH3 - CH2)-2.65)/0.95)
-        R = 1.1
-        I_3 = V_d3/R
-            
-        density = (M**0.5 / A) * I_3*1e6*self.f1(V_d2,T)
-        
-            
-        #get sample range from trigger
-        t_trig = t[np.where(CH1 > 1)]
-        t_i = np.min(t_trig)
-        t_f = np.max(t_trig)
-        sample_length = t_f - t_i
-            
-        sample_range = (t_i + 0.4*sample_length,t_f - 0.1*sample_length)
-            
-        avg_density = np.mean(density[np.where((t > sample_range[0]) & (t < sample_range[1]))])
-        std_density = np.std(density[np.where((t > sample_range[0]) & (t < sample_range[1]))])
-        
-        avg_temp = np.mean(T[np.where((t > sample_range[0]) & (t < sample_range[1]))])
-        std_temp = np.std(T[np.where((t > sample_range[0]) & (t < sample_range[1]))])
-            
-        if ax2: 
-            p1, = ax2.plot(t,T,label='Electron Temp. ${:.2}\pm{:.2}$ eV'.format(avg_temp,std_temp))
-            p3, = ax2.plot(t,CH1,label='Trigger')
-            ax2.set_ylabel('Electron Temperature (eV)')
-            ax2.set_xlabel('Time ($\mu s)$')
-            ax2.set_xlim(sample_range[0],sample_range[1])
-            
-            ax4 = ax2.twinx()
-            ax4.set_ylabel('Plasma Density ($cm^{-3}$)')
-            p2, = ax4.semilogy(t,density,'r',label='Plasma Density ${:.2}\pm{:.2}$ $1/cm^3$'.format(avg_density,std_density))
-
-            ax2.legend(handles=[p1,p2,p3])
-        return [avg_density,std_density],[avg_temp,std_temp]    
+        npts = int(self.channel_settings[0][-9])
     
-    def update_plasma_params(self,filename,density_meas='',temp_meas='',data_append=''):
-        logging.info('Updating')
-        if density_meas == '' or temp_meas == '':
-            density_meas,temp_meas = self.calculate_plasma_params(self.read_scope())#[0.0,1.0],[2.0,3.0]
+        curv = self.scope.query_ascii_values('CURV?',container=list,separator=',')
+
+        data = []
+        for i in range(4):
+            data.append(np.asfarray(curv[i*npts:(i+1)*npts]))
+        
+        ch_data = [np.linspace(0.0,len(data[0])*float(self.channel_settings[0][-9]),len(data[0]))]
+    
+    
+        for ch,setting in zip(data,self.channel_settings):
+            logging.debug(setting)
+            ydata = (ch - float(setting[-2])) * float(setting[-3]) + float(setting[-1])
+            ch_data.append(ydata)
+        return np.asfarray(ch_data)
+    
+    def update_plasma_params(self,data):
+        density,temp = pmath.calculate_plasma_params(data)#[0.0,1.0],[2.0,3.0]
         
         self.plasma_density.set('{:.2e} +/- {:.2e}'.format(*density_meas))
         self.plasma_temp.set('{:.2e} +/- {:.2e}'.format(*temp_meas))
-        
-        if self.save_plasma_params:
-            logging.info('Writing to file')
-            self.status.set('Writing: On')
-            with open(self.filename,'a') as file:
-                file.write('{:.4e},{:.4e},{:.4e},{:.4e},{}\n'.format(*density_meas,*temp_meas,data_append))
-        else:
-            self.status.set('Writing: Off')
+     
         self._update_count += 1
     
+    def save_plasma_params_to_file(self,data,filename,data_append=''):
+        density,temp = pmath.calculate_plasma_params(data)#[0.0,1.0],[2.0,3.0]        
+    
+        logging.info('Writing to file')
+        self.status.set('Writing: On')
+        with open(filename,'a') as file:
+            file.write('{:.4e},{:.4e},{:.4e},{:.4e},{}\n'.format(*density,*temp,data_append))
+    
     def save_shots(self):
-        logging.info('Saving shots')
-        self.save_plasma_params = True
-        
+        logging.info('Saving shots')        
         foldername = 'data/{}'.format(time.strftime('%m_%d_%Y',time.gmtime()))
         
         #search for a folder of a name and create it if the name is not found
         for i in range(10000):
-            fullpth = '{}_{}'.format(foldername,i)
+            fullpth = '{}/{}'.format(foldername,i)
             if not os.path.isdir(fullpth):
                 os.makedirs(fullpth)
                 break
                 
         #save raw data and plasma params for each shot
-        for i in range(int(self.scan_samples)):
+        for i in range(int(self.scan_samples.get())):
             data = self.read_scope()
-            density,temp = self.calculate_plasma_params(data)
-            self.update_plasma_params('{}/plasma_params.txt'.format(fullpth),density_meas = density,temp_meas = temp)
             np.savetxt('{}/data_{}.txt'.format(fullpth,i),data.T)
             time.sleep(self.delay/1000)
             
-            
-    def f1(self,V_d2,T_e):
-        return 1.05e9 * (T_e)**(-0.5) / (np.exp(V_d2/T_e) - 1)
-    
-    def T_e(self,V_d2,V_d3):
-        return V_d2/np.log(2)
-        #return V_d2 / (np.log(2)*(1+np.exp(-0.2567*(V_d3/V_d2)**2))*(1-np.exp(0.9968*(2-V_d3/V_d2))))
-
+        logging.info('done saving shots')
+      
     def continuous_update(self): 
-        self.update_plasma_params(self.plasma_params_filename.get())
+        if self.calculate_plasma_params:
+            data = self.read_scope()
+            self.update_plasma_params(data)
+            if self.save_plasma_params():
+                self.save_plasma_params_to_file(data,self.plasma_params_filename)
+            
         self.root.after(self.delay,self.continuous_update)
 
     def manual_displacement(self):
@@ -321,16 +269,18 @@ class App():
 
 def main():
     logging.basicConfig(level=logging.INFO)
-    
-    try:
+    app = App()
+    app.root.mainloop()
+    #try:
         
-        app = App()
+    #    app = App()
         
-        app.root.mainloop()
-    except Exception as e:
-        logging.exception(e)
-    finally:
-        App().root.destroy()
+    #    app.root.mainloop()
+    #except Exception as e:
+     #   logging.exception(e.args)
+    #finally:
+    #    pass
+    #    app.destroy()
     
 if __name__=='__main__':
     main()
