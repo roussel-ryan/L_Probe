@@ -54,6 +54,9 @@ class App():
         self.plasma_params_filename = ttk.StringVar()
         self.plasma_params_filename.set('test.txt')
         
+        self.raw_data_folder = ttk.StringVar()
+        self.raw_data_folder.set('data/')
+        
         self.scan_interval = ttk.StringVar()
         self.scan_interval.set('20.0')
         
@@ -88,6 +91,11 @@ class App():
         file_entry = CopyPasteBox(self.frame,textvariable = self.plasma_params_filename)
         file_entry.pack()
         
+        raw_folder_entrylabel = ttk.Label(self.frame,text = 'Raw data folder: ')
+        raw_folder_entrylabel.pack()
+        raw_folder_entry = CopyPasteBox(self.frame,textvariable = self.raw_data_folder)
+        raw_folder_entry.pack()
+        
         scan_lengthlabel = ttk.Label(self.frame,text = 'Distance to scan over (mm): ')
         scan_lengthlabel.pack()
         scan_length = CopyPasteBox(self.frame,textvariable = self.scan_interval)
@@ -117,11 +125,10 @@ class App():
         plasma_temp_label = ttk.Label(self.frame,textvariable = self.plasma_temp)
         plasma_temp_label.pack()
        
-        
-        saveparamsbutton = ttk.Button(self.frame,text = 'Calculate Plasma Params',command = lambda self.calculate_plasma_params: not self.calculate_plasma_params)
+        saveparamsbutton = ttk.Button(self.frame,text = 'Measure Plasma Params',command = self.flip_measure_plasma_params)
         saveparamsbutton.pack()
        
-        saveparamsbutton = ttk.Button(self.frame,text = 'Save Plasma Params',command = lambda self.save_plasma_params: not self.save_plasma_params)
+        saveparamsbutton = ttk.Button(self.frame,text = 'Save Plasma Params',command = self.flip_save_plasma_params)
         saveparamsbutton.pack()
         
         saveshotsbutton = ttk.Button(self.frame,text = 'Save Shots',command = self.save_shots)
@@ -130,13 +137,15 @@ class App():
         scanbutton = ttk.Button(self.frame,text = 'Scan Plasma Chamber',command = self.scan)
         scanbutton.pack()
         
-
         displacebutton = ttk.Button(self.frame,text = 'Manually Displace',command = self.manual_displacement)
         displacebutton.pack()
         
-        #self.init_scope()
-        #self.stepper = stepper.Stepper('COM4')
-        #self.continuous_update()
+        zerobutton = ttk.Button(self.frame,text = 'Zero',command = self.zero_stepper)
+        zerobutton.pack()
+        
+        self.init_scope()
+        self.stepper = stepper.Stepper('COM4')
+        self.continuous_update()
 
     def init_scope(self):
         self.manager = visa.ResourceManager()
@@ -154,15 +163,12 @@ class App():
         nsettings = 10
         self.preambles = self.scope.query('WFMPR?').strip().split(';')
         logging.debug(len(self.preambles))
-
-                
+            
         self.channel_settings = []
         for j in range(4):
             self.channel_settings.append(self.preambles[5+j*nsettings:5+(j+1)*nsettings])
 
-    
         npts = int(self.channel_settings[0][-9])
-    
         curv = self.scope.query_ascii_values('CURV?',container=list,separator=',')
 
         data = []
@@ -170,7 +176,6 @@ class App():
             data.append(np.asfarray(curv[i*npts:(i+1)*npts]))
         
         ch_data = [np.linspace(0.0,len(data[0])*float(self.channel_settings[0][-9]),len(data[0]))]
-    
     
         for ch,setting in zip(data,self.channel_settings):
             logging.debug(setting)
@@ -196,7 +201,7 @@ class App():
     
     def save_shots(self):
         logging.info('Saving shots')        
-        foldername = 'data/{}'.format(time.strftime('%m_%d_%Y',time.gmtime()))
+        foldername = '{}{}'.format(self.raw_data_folder.get(),time.strftime('%m_%d_%Y',time.gmtime()))
         
         #search for a folder of a name and create it if the name is not found
         for i in range(10000):
@@ -204,22 +209,26 @@ class App():
             if not os.path.isdir(fullpth):
                 os.makedirs(fullpth)
                 break
-                
-        #save raw data and plasma params for each shot
-        for i in range(int(self.scan_samples.get())):
+        logging.info('Index {}'.format(i))
+        if not os.path.isdir('{}/raw'.format(fullpth)):
+            os.makedirs('{}/raw'.format(fullpth))
+        #save raw data for each shot
+        for j in range(int(self.scan_samples.get())):
             data = self.read_scope()
-            np.savetxt('{}/data_{}.txt'.format(fullpth,i),data.T)
-            time.sleep(self.delay/1000)
+            np.savetxt('{}/raw/data_{}.txt'.format(fullpth,j),data.T)
+            time.sleep(self.delay/1500)
             
         logging.info('done saving shots')
       
     def continuous_update(self): 
-        if self.calculate_plasma_params:
+        if self.measure_plasma_params:
             data = self.read_scope()
             self.update_plasma_params(data)
             if self.save_plasma_params():
                 self.save_plasma_params_to_file(data,self.plasma_params_filename)
-            
+        else:
+            if self.save_plasma_params:
+                self.measure_plasma_params = True
         self.root.after(self.delay,self.continuous_update)
 
     def manual_displacement(self):
@@ -232,10 +241,25 @@ class App():
         self.stepper.zero_location()
         
     def scan(self):
-        self.save_plasma_params = False
         logging.info('Zeroing probe')
-        self.zero_stepper()
-        self.stepper.go_to(41.0)
+        foldername = '{}{}'.format(self.raw_data_folder.get(),time.strftime('%m_%d_%Y',time.gmtime()))
+        
+        #search for a folder of a name and create it if the name is not found
+        
+        if not os.path.isdir('{}/scans'.format(foldername)):
+            os.makedirs('{}/scans'.format(foldername))
+        
+        for i in range(10000):
+            fullpth = '{}/scans/scan_{}'.format(foldername,i)
+            if not os.path.isdir(fullpth):
+                os.makedirs(fullpth)
+                break
+        logging.info('Scan index {}'.format(i))
+        
+        #self.zero_stepper()
+        start = 41.0
+        logging.info('Going to start positition {}mm'.format(start))
+        self.stepper.go_to(start)
         
         points = int(self.scan_number.get())
         full_length = float(self.scan_interval.get())
@@ -247,16 +271,19 @@ class App():
             self.stepper.go_to(scan_step_size)
             logging.info('Current stepper position: {:.2} mm'.format(self.stepper.mm_loc))
             
-            self.save_plasma_params = True
-            for j in range(0,samples):
-                self.update_plasma_params(self.plasma_params_filename.get(),data_append = '{:.2}'.format(self.stepper.mm_loc))
-                self.root.after(self.delay,self.wait())
-            self.save_plasma_params = False
+            #save raw data for each shot
+            for j in range(int(self.scan_samples.get())):
+                data = self.read_scope()
+                np.savetxt('{}/data_{}mm_{}.txt'.format(fullpth,self.stepper.mm_loc,j),data.T)
+                time.sleep(self.delay/1500)
         logging.info('Done with scan, zeroing')
-        self.zero_stepper()
+        self.stepper.go_to(-start)
         
     def wait(self): 
         pass
+    
+    def flip_measure_plasma_params(self):
+        self.measure_plasma_params = not self.measure_plasma_params
     
     def flip_save_plasma_params(self):
         self.save_plasma_params = not self.save_plasma_params
