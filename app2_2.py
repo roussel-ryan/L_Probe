@@ -175,7 +175,7 @@ class App():
         for i in range(4):
             data.append(np.asfarray(curv[i*npts:(i+1)*npts]))
         
-        ch_data = [np.linspace(0.0,len(data[0])*float(self.channel_settings[0][-9]),len(data[0]))]
+        ch_data = [np.linspace(0.0,len(data[0])*float(self.channel_settings[0][-6]),len(data[0]))]
     
         for ch,setting in zip(data,self.channel_settings):
             logging.debug(setting)
@@ -205,7 +205,7 @@ class App():
         
         #search for a folder of a name and create it if the name is not found
         for i in range(10000):
-            fullpth = '{}/{}'.format(foldername,i)
+            fullpth = '{}/raw/{}'.format(foldername,i)
             if not os.path.isdir(fullpth):
                 os.makedirs(fullpth)
                 break
@@ -213,6 +213,13 @@ class App():
         if not os.path.isdir('{}/raw'.format(fullpth)):
             os.makedirs('{}/raw'.format(fullpth))
         #save raw data for each shot
+        for i in range(10000):
+            fullpth = '{}/raw/{}'.format(foldername,i)
+            if not os.path.isdir(fullpth):
+                os.makedirs(fullpth)
+                break
+        logging.info('Index {}'.format(i))
+        
         for j in range(int(self.scan_samples.get())):
             data = self.read_scope()
             np.savetxt('{}/raw/data_{}.txt'.format(fullpth,j),data.T)
@@ -239,6 +246,7 @@ class App():
     def zero_stepper(self):
         self.stepper.go_to(-1000000.0)
         self.stepper.zero_location()
+        self.curr_location.set('Current Location: {:.2f}mm'.format(0.0))
         
     def scan(self):
         logging.info('Zeroing probe')
@@ -256,10 +264,9 @@ class App():
                 break
         logging.info('Scan index {}'.format(i))
         
-        #self.zero_stepper()
-        start = 41.0
-        logging.info('Going to start positition {}mm'.format(start))
-        self.stepper.go_to(start)
+        start = self.stepper.mm_loc
+
+        logging.info('Start positition {}mm'.format(start))
         
         points = int(self.scan_number.get())
         full_length = float(self.scan_interval.get())
@@ -268,6 +275,7 @@ class App():
         
         logging.info('Doing scan with {} points,step size: {:.2}mm'.format(points,scan_step_size))
         for i in range(0,points):
+            logging.info('stepping')
             self.stepper.go_to(scan_step_size)
             logging.info('Current stepper position: {:.2} mm'.format(self.stepper.mm_loc))
             
@@ -276,9 +284,9 @@ class App():
                 data = self.read_scope()
                 np.savetxt('{}/data_{}mm_{}.txt'.format(fullpth,self.stepper.mm_loc,j),data.T)
                 time.sleep(self.delay/1500)
-        logging.info('Done with scan, zeroing')
-        self.stepper.go_to(-start)
-        
+        logging.info('Done with scan,going to orig location')
+        self.stepper.go_to(-full_length)
+        logging.info('Ready')
     def wait(self): 
         pass
     
