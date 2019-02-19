@@ -44,6 +44,7 @@ class App():
         
         self.delay = 1000
         self.timeout = 1000
+        self.rep_rate = 0.5
         self.loc= 0.00
         self._update_count = 0
 
@@ -203,27 +204,30 @@ class App():
         logging.info('Saving shots')        
         foldername = '{}{}'.format(self.raw_data_folder.get(),time.strftime('%m_%d_%Y',time.gmtime()))
         
-        #search for a folder of a name and create it if the name is not found
+        #search for a folder of a with the date and create it if the name is not found
+        if not os.path.isdir(foldername):
+            logging.info('Making folder {}'.format(foldername))
+            os.makedirs(foldername)
+               
+        #make a raw directory if one is not found
+        raw_foldername = '{}/raw'.format(foldername)
+        if not os.path.isdir(raw_foldername):
+            logging.info('Making folder {}'.format(raw_foldername))
+            os.makedirs(raw_foldername)
+        
+        #make a folder for the particular index number
         for i in range(10000):
-            fullpth = '{}/raw/{}'.format(foldername,i)
-            if not os.path.isdir(fullpth):
-                os.makedirs(fullpth)
-                break
-        logging.info('Index {}'.format(i))
-        if not os.path.isdir('{}/raw'.format(fullpth)):
-            os.makedirs('{}/raw'.format(fullpth))
-        #save raw data for each shot
-        for i in range(10000):
-            fullpth = '{}/raw/{}'.format(foldername,i)
+            fullpth = '{}/{}'.format(raw_foldername,i)
             if not os.path.isdir(fullpth):
                 os.makedirs(fullpth)
                 break
         logging.info('Index {}'.format(i))
         
+        
         for j in range(int(self.scan_samples.get())):
             data = self.read_scope()
-            np.savetxt('{}/raw/data_{}.txt'.format(fullpth,j),data.T)
-            time.sleep(self.delay/1500)
+            np.savetxt('{}/data_{}.txt'.format(fullpth,j),data.T)
+            time.sleep(1.25*(1 / self.rep_rate))
             
         logging.info('done saving shots')
       

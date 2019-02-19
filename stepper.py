@@ -45,10 +45,12 @@ class Stepper:
             if 'pos_limit' in msg.decode():
                 end_condition = 'pos_limit'
                 logging.info('Hit positive limit switch')
+                self.mm_loc = 100.0
                 break
             elif 'neg_limit' in msg.decode():
                 end_condition = 'neg_limit'
                 logging.info('Hit negitive limit switch')
+                self.mm_loc = 0.0
                 break
             elif 'normal' in msg.decode():
                 end_condition = 'normal'
