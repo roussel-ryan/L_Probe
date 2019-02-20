@@ -120,23 +120,23 @@ class App():
         location_label = ttk.Label(self.frame,textvariable = self.curr_location)
         location_label.pack()
 
-        plasma_density_label = ttk.Label(self.frame,textvariable = self.plasma_density)
-        plasma_density_label.pack()
+        #plasma_density_label = ttk.Label(self.frame,textvariable = self.plasma_density)
+        #plasma_density_label.pack()
         
-        plasma_temp_label = ttk.Label(self.frame,textvariable = self.plasma_temp)
-        plasma_temp_label.pack()
+        #plasma_temp_label = ttk.Label(self.frame,textvariable = self.plasma_temp)
+        #plasma_temp_label.pack()
        
-        saveparamsbutton = ttk.Button(self.frame,text = 'Measure Plasma Params',command = self.flip_measure_plasma_params)
-        saveparamsbutton.pack()
+        #saveparamsbutton = ttk.Button(self.frame,text = 'Measure Plasma Params',command = self.flip_measure_plasma_params)
+        #saveparamsbutton.pack()
        
-        saveparamsbutton = ttk.Button(self.frame,text = 'Save Plasma Params',command = self.flip_save_plasma_params)
-        saveparamsbutton.pack()
+        #saveparamsbutton = ttk.Button(self.frame,text = 'Save Plasma Params',command = self.flip_save_plasma_params)
+        #saveparamsbutton.pack()
         
-        saveshotsbutton = ttk.Button(self.frame,text = 'Save Shots',command = self.save_shots)
-        saveshotsbutton.pack()
+        self.saveshotsbutton = ttk.Button(self.frame,text = 'Save Shots',command = self.save_shots)
+        self.saveshotsbutton.pack()
         
-        scanbutton = ttk.Button(self.frame,text = 'Scan Plasma Chamber',command = self.scan)
-        scanbutton.pack()
+        self.scanbutton = ttk.Button(self.frame,text = 'Scan Plasma Chamber',command = self.scan)
+        self.scanbutton.pack()
         
         displacebutton = ttk.Button(self.frame,text = 'Manually Displace',command = self.manual_displacement)
         displacebutton.pack()
@@ -153,8 +153,14 @@ class App():
         try: 
             self.scope = self.manager.open_resource('GPIB1::1::INSTR')
         except pyvisa.errors.VisaIOError: 
-            self.scope = self.manager.open_resource('TCPIP::169.254.4.83::INSTR')
-        
+            try:
+                self.scope = self.manager.open_resource('TCPIP::169.254.4.83::INSTR')
+            except pyvis.errors.VisaIOError:
+                logging.warning('Scope not connected - data taking disabled')
+                self.scanbutton.configure(state=DISABLE)
+                self.saveshotbutton.configure(state=DISABLE)
+                
+                
     def read_scope(self):
         logging.info('Reading scope')
         self.scope.write('DATA:SOURCE CH1,CH2,CH3,CH4')
